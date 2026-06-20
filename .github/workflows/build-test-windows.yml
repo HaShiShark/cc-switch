@@ -1,0 +1,60 @@
+name: Build Test Windows EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build portable exe
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.95
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri binary
+        run: pnpm tauri build --no-bundle
+
+      - name: Package portable exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exeCandidates = @(
+            'src-tauri/target/release/cc-switch.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -eq $exePath) {
+            throw 'cc-switch.exe was not produced'
+          }
+          New-Item -ItemType Directory -Force -Path artifact/CC-Switch-Test | Out-Null
+          Copy-Item $exePath artifact/CC-Switch-Test/cc-switch.exe
+          Set-Content -Path artifact/CC-Switch-Test/portable.ini -Encoding UTF8 -Value @(
+            '# CC Switch portable build marker',
+            'portable=true'
+          )
+          Compress-Archive -Path artifact/CC-Switch-Test/* -DestinationPath artifact/CC-Switch-Test-Windows-Portable.zip -Force
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: CC-Switch-Test-Windows-Portable
+          path: artifact/CC-Switch-Test-Windows-Portable.zip
+          if-no-files-found: error
