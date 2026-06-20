@@ -1916,6 +1916,10 @@ fn log_forward_error(
 ) {
     use super::usage::logger::UsageLogger;
 
+    if !usage_logging_enabled(state) {
+        return;
+    }
+
     let logger = UsageLogger::new(&state.db);
     let status_code = map_proxy_error_to_status(error);
     let error_message = get_error_message(error);
