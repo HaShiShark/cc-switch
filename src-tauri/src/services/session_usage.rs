@@ -489,13 +489,28 @@ fn process_snapshot() -> Option<String> {
 }
 
 fn command_output(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
+    let mut command = Command::new(program);
+    command.args(args);
+    hide_command_window(&mut command);
+
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
 
     String::from_utf8(output.stdout).ok()
 }
+
+#[cfg(target_os = "windows")]
+fn hide_command_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_command_window(_command: &mut Command) {}
 
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
