@@ -1032,66 +1032,10 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
-                let db_for_session_sync = state.db.clone();
-                tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
-
-                    fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
-                        if let Err(e) = result {
-                            log::warn!("{name} failed: {e}");
-                        }
-                    }
-
-                    let db = &db_for_session_sync;
-
-                    // 首次同步
-                    run_step(
-                        "Usage cost startup backfill",
-                        db.backfill_missing_usage_costs(),
-                    );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
-
-                    // 定期同步
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        SESSION_SYNC_INTERVAL_SECS,
-                    ));
-                    interval.tick().await; // skip immediate first tick
-                    loop {
-                        interval.tick().await;
-                        run_step(
-                            "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
-                        );
-                        run_step(
-                            "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
-                        );
-                        run_step(
-                            "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
-                        );
-                    }
-                });
+                // Diagnostic build: keep proxy/routing behavior intact while
+                // disabling automatic session-log ingestion. Manual
+                // `sync_session_usage` remains available for comparison.
+                log::warn!("[diagnostic] automatic session usage sync disabled");
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
