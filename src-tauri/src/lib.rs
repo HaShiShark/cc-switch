@@ -1052,19 +1052,19 @@ pub fn run() {
                     );
                     run_step(
                         "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
+                        crate::services::session_usage::sync_claude_session_logs_auto(db),
                     );
                     run_step(
                         "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
+                        crate::services::session_usage_codex::sync_codex_usage_auto(db),
                     );
                     run_step(
                         "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        crate::services::session_usage_gemini::sync_gemini_usage_auto(db),
                     );
                     run_step(
                         "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        crate::services::session_usage_opencode::sync_opencode_usage_auto(db),
                     );
 
                     // 定期同步
@@ -1076,19 +1076,19 @@ pub fn run() {
                         interval.tick().await;
                         run_step(
                             "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
+                            crate::services::session_usage::sync_claude_session_logs_auto(db),
                         );
                         run_step(
                             "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
+                            crate::services::session_usage_codex::sync_codex_usage_auto(db),
                         );
                         run_step(
                             "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
+                            crate::services::session_usage_gemini::sync_gemini_usage_auto(db),
                         );
                         run_step(
                             "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
+                            crate::services::session_usage_opencode::sync_opencode_usage_auto(db),
                         );
                     }
                 });

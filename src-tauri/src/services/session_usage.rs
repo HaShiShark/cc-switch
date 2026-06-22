@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// 同步结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +43,9 @@ pub struct DataSourceSummary {
     pub total_cost_usd: String,
 }
 
+/// Background sync should only import transcripts that have stopped changing.
+pub(crate) const DEFAULT_AUTO_SYNC_MIN_FILE_AGE: Duration = Duration::from_secs(300);
+
 /// 从 JSONL 中解析出的 assistant 消息使用数据
 #[derive(Debug)]
 struct ParsedAssistantUsage {
@@ -59,6 +62,17 @@ struct ParsedAssistantUsage {
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_claude_session_logs_with_min_file_age(db, None)
+}
+
+pub fn sync_claude_session_logs_auto(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_claude_session_logs_with_min_file_age(db, Some(DEFAULT_AUTO_SYNC_MIN_FILE_AGE))
+}
+
+fn sync_claude_session_logs_with_min_file_age(
+    db: &Database,
+    min_file_age: Option<Duration>,
+) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
     if !projects_dir.exists() {
         return Ok(SessionSyncResult {
@@ -82,7 +96,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, min_file_age) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -179,13 +193,27 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    min_file_age: Option<Duration>,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+
+    if let Some(min_age) = min_file_age {
+        if is_recently_modified(&metadata, min_age) {
+            log::debug!(
+                "[SESSION-SYNC] skipping active Claude transcript: {}",
+                file_path.display()
+            );
+            return Ok((0, 0));
+        }
+    }
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
@@ -380,6 +408,17 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
         .unwrap_or(0)
+}
+
+/// Returns true when a file is too new for conservative background sync.
+pub(crate) fn is_recently_modified(metadata: &fs::Metadata, min_age: Duration) -> bool {
+    match metadata.modified() {
+        Ok(modified) => match SystemTime::now().duration_since(modified) {
+            Ok(age) => age < min_age,
+            Err(_) => true,
+        },
+        Err(_) => false,
+    }
 }
 
 /// 更新 session_log_sync 表中某条目的同步进度。
