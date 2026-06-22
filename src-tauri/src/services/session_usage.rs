@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 /// 同步结果
@@ -66,6 +67,18 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 }
 
 pub fn sync_claude_session_logs_auto(db: &Database) -> Result<SessionSyncResult, AppError> {
+    if is_claude_session_owner_running() {
+        log::debug!(
+            "[SESSION-SYNC] skipping automatic Claude session sync while Claude is running"
+        );
+        return Ok(SessionSyncResult {
+            imported: 0,
+            skipped: 0,
+            files_scanned: 0,
+            errors: vec![],
+        });
+    }
+
     sync_claude_session_logs_with_min_file_age(db, Some(DEFAULT_AUTO_SYNC_MIN_FILE_AGE))
 }
 
@@ -421,6 +434,69 @@ pub(crate) fn is_recently_modified(metadata: &fs::Metadata, min_age: Duration) -
     }
 }
 
+fn is_claude_session_owner_running() -> bool {
+    process_snapshot()
+        .as_deref()
+        .map(contains_claude_process_marker)
+        .unwrap_or(false)
+}
+
+fn contains_claude_process_marker(snapshot: &str) -> bool {
+    snapshot.lines().any(process_line_matches_claude_owner)
+}
+
+fn process_line_matches_claude_owner(line: &str) -> bool {
+    let normalized = line.replace('\\', "/").to_ascii_lowercase();
+
+    if normalized.contains("claude desktop")
+        || normalized.contains("anthropicclaude")
+        || normalized.contains("@anthropic-ai/claude-code")
+        || normalized.contains("anthropic-ai/claude-code")
+        || normalized.contains("claude-code")
+    {
+        return true;
+    }
+
+    normalized
+        .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == ';')
+        .any(|token| {
+            token == "claude"
+                || token == "claude.exe"
+                || token.ends_with("/claude")
+                || token.ends_with("/claude.exe")
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn process_snapshot() -> Option<String> {
+    command_output(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+        ],
+    )
+    .or_else(|| command_output("tasklist.exe", &["/fo", "csv", "/nh"]))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_snapshot() -> Option<String> {
+    command_output("ps", &["-axo", "comm=,args="])
+}
+
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout).ok()
+}
+
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
 /// Shared by all session_usage_* parsers.
@@ -603,6 +679,26 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_process_marker_detects_desktop_and_cli() {
+        assert!(contains_claude_process_marker(
+            r#"C:\Users\alice\AppData\Local\AnthropicClaude\Claude.exe" --type=renderer"#
+        ));
+        assert!(contains_claude_process_marker(
+            r#"node.exe C:\Users\alice\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js"#
+        ));
+        assert!(contains_claude_process_marker(
+            "/usr/local/bin/claude --dangerously-skip-permissions"
+        ));
+    }
+
+    #[test]
+    fn claude_process_marker_ignores_unrelated_processes() {
+        assert!(!contains_claude_process_marker(
+            "cc-switch.exe\nnode.exe C:\\projects\\other-tool\\index.js"
+        ));
+    }
 
     #[test]
     fn test_parse_usage_from_jsonl_line() {
